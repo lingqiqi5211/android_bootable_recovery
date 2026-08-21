@@ -2588,9 +2588,22 @@ int GUIAction::wlanconnect(std::string arg __unused) {
     bool connected = false;
     for (int i = 0; i < 30; ++i) {
         WlanCommandResult status = RunWpaCli("status");
+        if (status.exit_code != 0) {
+            logBox->AddLogLine("[ERROR] Unable to query wpa_supplicant status", "error");
+            return fail_network();
+        }
         if (status.output.find("wpa_state=COMPLETED") != std::string::npos) {
             connected = true;
             break;
+        }
+
+        WlanCommandResult networks = RunWpaCli("list_networks");
+        if (networks.exit_code == 0 &&
+            networks.output.find("[TEMP-DISABLED]") != std::string::npos) {
+            logBox->AddLogLine(
+                "[ERROR] Authentication rejected; check the password and security mode",
+                "error");
+            return fail_network();
         }
         ::sleep(1);
     }
