@@ -2173,41 +2173,104 @@ static GUIBorderedLogBox* FindWlanLogBox() {
 
 static std::string run_command_get_output(const std::string& cmd);
 
+struct WlanCommandResult {
+    int exit_code;
+    std::string output;
+};
+
+static WlanCommandResult RunWlanCommand(const std::string& command) {
+    FILE* pipe = popen(command.c_str(), "r");
+    if (!pipe) {
+        return {-1, ""};
+    }
+
+    std::string output;
+    char buffer[1024];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        output += buffer;
+    }
+
+    int status = pclose(pipe);
+    int exit_code = -1;
+    if (status >= 0 && WIFEXITED(status)) {
+        exit_code = WEXITSTATUS(status);
+    }
+    return {exit_code, output};
+}
+
+static std::string TrimWlanValue(std::string value) {
+    while (!value.empty() && (value.back() == '\n' || value.back() == '\r' ||
+                              value.back() == ' ' || value.back() == '\t')) {
+        value.pop_back();
+    }
+    size_t start = 0;
+    while (start < value.size() &&
+           (value[start] == ' ' || value[start] == '\t' ||
+            value[start] == '\n' || value[start] == '\r')) {
+        ++start;
+    }
+    return value.substr(start);
+}
+
+static void AddWlanCommandOutput(GUIBorderedLogBox* logBox,
+                                 const std::string& output,
+                                 const std::string& style) {
+    std::istringstream stream(output);
+    std::string line;
+    while (std::getline(stream, line)) {
+        line = TrimWlanValue(line);
+        if (!line.empty()) {
+            logBox->AddLogLine(line, style);
+        }
+    }
+}
+
+static bool StartWlanRuntime(GUIBorderedLogBox* logBox) {
+    WlanCommandResult result =
+        RunWlanCommand("/system/bin/marble-wifi-control start 2>&1");
+    if (result.exit_code != 0) {
+        AddWlanCommandOutput(logBox, result.output, "error");
+        return false;
+    }
+    return true;
+}
+
 int GUIAction::wlanstart(string arg __unused) {
 	GUIBorderedLogBox* logBox = FindWlanLogBox();
-	if (logBox) {
-		logBox->AddLogLine("[INFO] Starting WLAN service...", "normal");
-		logBox->AddLogLine("[INFO] Initializing network interface...", "normal");
-		logBox->AddLogLine("[INFO] WLAN service started successfully", "normal");
-		logBox->AddLogLine("[INFO] Interface: wlan0", "normal");
-		logBox->AddLogLine("[INFO] Status: UP", "normal");
-
-		const std::string scan_reply = run_command_get_output(
-			"wpa_cli -iwlan0 -p/tmp/recovery/sockets scan");
-		if (scan_reply.find("OK") != std::string::npos) {
-			logBox->AddLogLine("[INFO] Initial WLAN scan requested", "normal");
-		} else if (scan_reply.find("FAIL-BUSY") != std::string::npos) {
-			logBox->AddLogLine("[INFO] WLAN scan already in progress", "normal");
-		} else {
-			logBox->AddLogLine("[WARNING] Initial WLAN scan could not be started", "warning");
-		}
-		gui_forceRender();
-	} else {
+	if (!logBox) {
 		LOGERR("WLAN log box not found\n");
+		return -1;
 	}
+
+	logBox->AddLogLine("[INFO] Starting WLAN service...", "normal");
+	gui_forceRender();
+	if (!StartWlanRuntime(logBox)) {
+		logBox->AddLogLine("[ERROR] WLAN service failed to start", "error");
+		gui_forceRender();
+		return -1;
+	}
+	logBox->AddLogLine("[INFO] WLAN service is ready on wlan0", "normal");
+	gui_forceRender();
 	return 0;
 }
 
 int GUIAction::wlanstop(string arg __unused) {
 	GUIBorderedLogBox* logBox = FindWlanLogBox();
-	if (logBox) {
-		logBox->AddLogLine("[INFO] Stopping WLAN service...", "normal");
-		logBox->AddLogLine("[INFO] WLAN service stopped", "normal");
-		logBox->AddLogLine("[INFO] Interface: wlan0 - DOWN", "normal");
-		gui_forceRender();
-	} else {
+	if (!logBox) {
 		LOGERR("WLAN log box not found\n");
+		return -1;
 	}
+
+	logBox->AddLogLine("[INFO] Stopping WLAN supplicant...", "normal");
+	WlanCommandResult result =
+		RunWlanCommand("/system/bin/marble-wifi-control stop 2>&1");
+	if (result.exit_code != 0) {
+		AddWlanCommandOutput(logBox, result.output, "error");
+		gui_forceRender();
+		return -1;
+	}
+	logBox->AddLogLine("[INFO] WLAN stopped; driver remains loaded", "normal");
+	gui_forceRender();
 	return 0;
 }
 
@@ -2417,59 +2480,6 @@ int GUIAction::wlanscan(std::string arg __unused) {
     DataManager::SetValue("tw_wlan_list_update", "1");
 
     return 0;
-}
-
-static std::string run_command_get_output(const std::string &cmd){
-    FILE *fp=popen(cmd.c_str(),"r");
-    if(!fp) return "";
-    std::string out; char buf[512];
-    while(fgets(buf,sizeof(buf),fp)) out+=buf;
-    pclose(fp);
-    return out;
-}
-
-static std::string run_command_get_output_debug(GUIBorderedLogBox* logBox, const std::string &cmd) {
-    if (logBox) {
-        logBox->AddLogLine("[DEBUG] Executing: " + cmd, "normal");
-    }
-
-    // 同时输出到 logcat/dmesg
-    LOGINFO("[DEBUG] Executing: %s\n", cmd.c_str());
-    FILE* dmesg_fp = popen(("echo '[DEBUG] Executing: " + cmd + "' > /dev/kmsg").c_str(), "r");
-    if (dmesg_fp) pclose(dmesg_fp);
-
-    FILE* fp = popen(cmd.c_str(), "r");
-    if (!fp) {
-        if (logBox) logBox->AddLogLine("[DEBUG] Failed to run command", "error");
-        LOGERR("[DEBUG] Failed to run command: %s\n", cmd.c_str());
-        return "";
-    }
-
-    std::string out;
-    char buf[512];
-    while (fgets(buf, sizeof(buf), fp)) {
-        out += buf;
-    }
-
-    int ret = pclose(fp);
-
-    std::ostringstream oss_ret;
-    oss_ret << "[DEBUG] Command return: " << ret;
-    if (logBox) logBox->AddLogLine(oss_ret.str(), "normal");
-    LOGINFO("%s\n", oss_ret.str().c_str());
-    FILE* dmesg_fp2 = popen(("echo '" + oss_ret.str() + "' > /dev/kmsg").c_str(), "r");
-    if (dmesg_fp2) pclose(dmesg_fp2);
-
-    if (!out.empty()) {
-        std::ostringstream oss_out;
-        oss_out << "[DEBUG] Output: " << out;
-        if (logBox) logBox->AddLogLine(oss_out.str(), "normal");
-        LOGINFO("%s\n", oss_out.str().c_str());
-        FILE* dmesg_fp3 = popen(("echo '" + oss_out.str() + "' > /dev/kmsg").c_str(), "r");
-        if (dmesg_fp3) pclose(dmesg_fp3);
-    }
-
-    return out;
 }
 
 // ===== GUIAction::wlanconnect =====
