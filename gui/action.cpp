@@ -2235,6 +2235,35 @@ static bool StartWlanRuntime(GUIBorderedLogBox* logBox) {
     return true;
 }
 
+static std::string DecodeWlanEscapes(const std::string& value) {
+    std::string decoded;
+    decoded.reserve(value.size());
+    for (size_t i = 0; i < value.size();) {
+        if (i + 3 < value.size() && value[i] == '\\' && value[i + 1] == 'x') {
+            auto hex_value = [](char c) -> int {
+                if (c >= '0' && c <= '9') return c - '0';
+                if (c >= 'a' && c <= 'f') return 10 + c - 'a';
+                if (c >= 'A' && c <= 'F') return 10 + c - 'A';
+                return -1;
+            };
+            int high = hex_value(value[i + 2]);
+            int low = hex_value(value[i + 3]);
+            if (high >= 0 && low >= 0) {
+                decoded.push_back(static_cast<char>((high << 4) | low));
+                i += 4;
+                continue;
+            }
+        }
+        decoded.push_back(value[i++]);
+    }
+    return decoded;
+}
+
+static WlanCommandResult RunWpaCli(const std::string& arguments) {
+    return RunWlanCommand("/system/bin/marble_recovery_wpa_cli -iwlan0 "
+                          "-p/tmp/recovery/sockets " + arguments + " 2>&1");
+}
+
 int GUIAction::wlanstart(string arg __unused) {
 	GUIBorderedLogBox* logBox = FindWlanLogBox();
 	if (!logBox) {
@@ -2284,181 +2313,76 @@ int GUIAction::wlanscan(std::string arg __unused) {
     logBox->AddLogLine("[INFO] Scanning for networks...", "normal");
     gui_forceRender();
 
-    const char* IFACE    = "wlan0";
-    const char* CTRL_DIR = "/tmp/recovery/sockets";
-    const char* WPACLI   = "wpa_cli"; // 不在 PATH 的话改成绝对路径
-
-    // ========= 1. 先执行 scan =========
-    {
-        std::string command = std::string(WPACLI) + " -i" + IFACE + " -p" + CTRL_DIR + " scan";
-        FILE* fp = popen(command.c_str(), "r");
-        if (!fp) {
-            logBox->AddLogLine("[ERROR] Failed to run wpa_cli scan", "error");
-            gui_forceRender();
-            return -1;
-        }
-
-        char buf[256];
-        std::string reply;
-        while (fgets(buf, sizeof(buf), fp) != nullptr) {
-            reply += buf;
-        }
-        pclose(fp);
-
-        if (reply.find("OK") == std::string::npos &&
-            reply.find("FAIL-BUSY") == std::string::npos) {
-            logBox->AddLogLine("[ERROR] wpa_cli scan failed", "error");
-            logBox->AddLogLine("        Reply: " + reply, "error");
-            gui_forceRender();
-            return -1;
-        }
-
-        if (reply.find("FAIL-BUSY") != std::string::npos)
-            logBox->AddLogLine("[INFO] Scan already in progress; waiting for results...", "normal");
-    }
-
-    // scan is asynchronous. Poll scan_results until the driver has returned
-    // at least one AP or the timeout expires.
-    std::vector<std::string> lines;
-    const int scan_timeout_ms = 10000;
-    const int scan_poll_interval_ms = 500;
-    for (int elapsed_ms = 0; elapsed_ms <= scan_timeout_ms; elapsed_ms += scan_poll_interval_ms) {
-        lines.clear();
-        // ========= 2. 执行 scan_results =========
-        std::string command = std::string(WPACLI) + " -i" + IFACE + " -p" + CTRL_DIR + " scan_results";
-        FILE* fp = popen(command.c_str(), "r");
-        if (!fp) {
-            logBox->AddLogLine("[ERROR] Failed to run wpa_cli scan_results", "error");
-            gui_forceRender();
-            return -1;
-        }
-
-        char buf[1024];
-        while (fgets(buf, sizeof(buf), fp) != nullptr) {
-            std::string line(buf);
-            while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
-                line.pop_back();
-            }
-            if (!line.empty())
-                lines.push_back(line);
-        }
-        pclose(fp);
-
-        if (lines.size() > 1 || elapsed_ms == scan_timeout_ms)
-            break;
-
-        usleep(scan_poll_interval_ms * 1000);
-    }
-
-    if (lines.size() <= 1) {
-        logBox->AddLogLine("[INFO] No networks found", "normal");
+    if (!StartWlanRuntime(logBox)) {
+        logBox->AddLogLine("[ERROR] WLAN runtime is unavailable", "error");
         gui_forceRender();
-        return 0;
+        return -1;
     }
 
-    // ========= 3. 辅助函数 =========
-    auto decode_hex_escaped = [](const std::string& s) -> std::string {
-        std::string out;
-        out.reserve(s.size());
-        for (size_t i = 0; i < s.size(); ) {
-            if (i + 3 < s.size() && s[i] == '\\' && s[i+1] == 'x') {
-                char hi = s[i+2];
-                char lo = s[i+3];
-                auto hexVal = [](char c) -> int {
-                    if (c >= '0' && c <= '9') return c - '0';
-                    if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
-                    if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
-                    return -1;
-                };
-                int hv = hexVal(hi);
-                int lv = hexVal(lo);
-                if (hv >= 0 && lv >= 0) {
-                    unsigned char v = (unsigned char)((hv << 4) | lv);
-                    out.push_back((char)v);
-                    i += 4;
-                    continue;
-                }
-            }
-            out.push_back(s[i]);
-            i++;
-        }
-        return out;
-    };
+    WlanCommandResult scan = RunWpaCli("scan");
+    if (scan.exit_code != 0 || scan.output.find("OK") == std::string::npos) {
+        logBox->AddLogLine("[ERROR] wpa_cli scan failed", "error");
+        AddWlanCommandOutput(logBox, scan.output, "error");
+        gui_forceRender();
+        return -1;
+    }
 
-    auto trim = [](std::string& s) {
-        size_t start = 0;
-        while (start < s.size() && isspace((unsigned char)s[start])) start++;
-        size_t end = s.size();
-        while (end > start && isspace((unsigned char)s[end - 1])) end--;
-        s = s.substr(start, end - start);
-    };
+    usleep(1500 * 1000);
+    WlanCommandResult results = RunWpaCli("scan_results");
+    if (results.exit_code != 0) {
+        logBox->AddLogLine("[ERROR] Failed to read scan results", "error");
+        AddWlanCommandOutput(logBox, results.output, "error");
+        gui_forceRender();
+        return -1;
+    }
 
     std::vector<GUIWlanList::WlanItem> wlanList;
     int count = 0;
-
-    // ========= 4. 解析每一行 =========
-    for (size_t li = 1; li < lines.size(); ++li) { // 跳过第一行表头
-        const std::string& line = lines[li];
-
-        // 按空格切成 token：bssid freq signal flags ssid(可能含空格)
-        std::vector<std::string> parts;
-        {
-            std::istringstream iss(line);
-            std::string token;
-            while (iss >> token) {
-                parts.push_back(token);
-            }
-        }
-        if (parts.size() < 4) {
+    std::istringstream result_stream(results.output);
+    std::string line;
+    bool header_seen = false;
+    while (std::getline(result_stream, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!header_seen) {
+            header_seen = true;
             continue;
         }
 
-        std::string bssid  = parts[0];
-        std::string freq   = parts[1];
-        std::string signal = parts[2];
-        std::string flags  = parts[3];
-
-        // 剩下部分合并为一个 SSID 字符串
-        std::string raw_ssid;
-        if (parts.size() > 4) {
-            raw_ssid = parts[4];
-            for (size_t i = 5; i < parts.size(); ++i) {
-                raw_ssid += " ";
-                raw_ssid += parts[i];
-            }
+        std::vector<size_t> tabs;
+        size_t position = 0;
+        while (tabs.size() < 4 &&
+               (position = line.find('\t', position)) != std::string::npos) {
+            tabs.push_back(position++);
         }
-
-        // 把 \x.. 形式解码成真正的 UTF-8 字节
-        std::string ssid = decode_hex_escaped(raw_ssid);
-        trim(ssid);
-
-        // 忽略 SSID 为空的网络
-        if (ssid.empty()) {
+        if (tabs.size() != 4) {
             continue;
         }
 
-        // 简单判断加密类型（留给 GUIWlanList 用）
+        std::string signal = line.substr(tabs[1] + 1, tabs[2] - tabs[1] - 1);
+        std::string flags = line.substr(tabs[2] + 1, tabs[3] - tabs[2] - 1);
+        std::string ssid = DecodeWlanEscapes(line.substr(tabs[3] + 1));
+        if (ssid.empty()) continue;
+
         std::string encryption = "Open";
-        if (flags.find("SAE") != std::string::npos) {
+        bool supports_sae = flags.find("SAE") != std::string::npos;
+        bool supports_psk = flags.find("PSK") != std::string::npos;
+        if (supports_sae && supports_psk) {
+            encryption = "WPA2/WPA3";
+        } else if (supports_sae) {
             encryption = "WPA3";
-        } else if (flags.find("WPA2") != std::string::npos) {
+        } else if (flags.find("WPA2") != std::string::npos ||
+                   flags.find("RSN") != std::string::npos) {
             encryption = "WPA2";
-        } else if (flags.find("WPA-PSK") != std::string::npos || flags.find("WPA") != std::string::npos) {
+        } else if (flags.find("WPA") != std::string::npos) {
             encryption = "WPA";
         }
 
-        // 日志输出：格式固定为
-        //   1. MyHomeWiFi (Signal: -45 dBm)
         ++count;
         std::ostringstream oss;
         oss << "  " << count << ". " << ssid
             << " (Signal: " << signal << " dBm)";
         logBox->AddLogLine(oss.str(), "normal");
 
-		// 添加空行，提高可读性
-		logBox->AddLogLine("", "normal");
-
-        // 列表项（保留 encryption，供后续用）
         GUIWlanList::WlanItem item;
         item.ssid       = ssid;
         item.signal     = signal + " dBm";
@@ -2467,13 +2391,10 @@ int GUIAction::wlanscan(std::string arg __unused) {
         wlanList.push_back(item);
     }
 
-    // ========= 5. 汇总 & 通知 UI =========
-    {
-        std::ostringstream oss;
-        oss << "[INFO] Found " << count << " networks";
-        logBox->AddLogLine(oss.str(), "normal");
-        logBox->AddLogLine("[INFO] Scan completed", "normal");
-    }
+    std::ostringstream summary;
+    summary << "[INFO] Found " << count << " networks";
+    logBox->AddLogLine(summary.str(), "normal");
+    logBox->AddLogLine("[INFO] Scan completed", "normal");
     gui_forceRender();
 
     SetWlanList(wlanList);
