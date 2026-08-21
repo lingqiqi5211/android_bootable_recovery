@@ -2660,38 +2660,39 @@ int GUIAction::wlangetstatus(std::string arg __unused) {
     logBox->AddLogLine("=== WLAN Status ===", "normal");
     logBox->AddLogLine("Interface: wlan0", "normal");
 
-    // 获取 wpa_supplicant 状态
-    std::string status = run_command_get_output("wpa_cli -iwlan0 -p/tmp/recovery/sockets status");
+    WlanCommandResult status_result = RunWpaCli("status");
+    if (status_result.exit_code != 0) {
+        logBox->AddLogLine("[ERROR] wpa_supplicant is not available", "error");
+        gui_forceRender();
+        return -1;
+    }
 
     std::string state = "UNKNOWN";
     std::string ssid = "UNKNOWN";
     std::string ip = "UNKNOWN";
     std::string mac = "UNKNOWN";
 
-    std::istringstream iss(status);
+    std::istringstream iss(status_result.output);
     std::string line;
     while (std::getline(iss, line)) {
         if (line.find("wpa_state=") == 0) {
-            state = line.substr(10);  // 去掉 wpa_state=
+            state = line.substr(10);
         } else if (line.find("ssid=") == 0) {
-            // 使用echo -e解码SSID
-            std::string escaped_ssid = line.substr(5);
-            ssid = run_command_get_output("echo -e \"" + escaped_ssid + "\"");
-            // 移除可能的换行符
-            if (!ssid.empty() && ssid.back() == '\n') {
-                ssid.pop_back();
-            }
+            ssid = DecodeWlanEscapes(line.substr(5));
         } else if (line.find("ip_address=") == 0) {
             ip = line.substr(11);
         }
     }
 
-    // 获取 MAC 地址
-    std::string mac_out = run_command_get_output("ifconfig wlan0 | awk '/HWaddr/ {print $5}'");
-    while (!mac_out.empty() && (mac_out.back() == '\n' || mac_out.back() == '\r')) mac_out.pop_back();
-    if (!mac_out.empty()) mac = mac_out;
+    if (ip == "UNKNOWN" || ip.empty())
+        ip = TrimWlanValue(RunWlanCommand("/system/bin/getprop net.wlan0.ipaddress").output);
 
-    // 输出到 logBox
+    std::ifstream mac_file("/sys/class/net/wlan0/address");
+    std::string mac_value;
+    if (std::getline(mac_file, mac_value) && !mac_value.empty()) {
+        mac = TrimWlanValue(mac_value);
+    }
+
     logBox->AddLogLine("State: " + state, "normal");
     logBox->AddLogLine("SSID: " + ssid, "normal");
     logBox->AddLogLine("IP: " + ip, "normal");
@@ -2712,39 +2713,25 @@ int GUIAction::wlantest(std::string arg __unused) {
     logBox->AddLogLine("[INFO] Testing network connectivity...", "normal");
     gui_forceRender();
 
-    const char* ping_bin = "/system/bin/busybox";
-    const char* iface = "wlan0";
-
-    auto run_ping = [&](const std::string& target, int count = 4) -> std::string {
-        std::string cmd = std::string(ping_bin) + " ping -I " + iface + " -c " + std::to_string(count) + " " + target;
-        FILE* fp = popen(cmd.c_str(), "r");
-        if (!fp) return "";
-        char buf[256];
-        std::string output;
-        while (fgets(buf, sizeof(buf), fp)) output += buf;
-        pclose(fp);
-        return output;
+    auto ping_succeeded = [](const std::string& target) {
+        WlanCommandResult result = RunWlanCommand(
+            "/system/bin/toybox ping -I wlan0 -c 1 -W 3 " + target + " 2>&1");
+        return result.exit_code == 0;
     };
 
-    // 自动获取网关
-    std::string gateway = "unknown";
-    FILE* fp = popen("netstat -rn | grep '^0.0.0.0' | awk '{print $2}'", "r");
-    if (fp) {
-        char buf[64];
-        if (fgets(buf, sizeof(buf), fp)) {
-            gateway = buf;
-            while (!gateway.empty() && (gateway.back() == '\n' || gateway.back() == '\r'))
-                gateway.pop_back();
-        }
-        pclose(fp);
-    }
+    auto tcp_succeeded = [](const std::string& target, const std::string& port) {
+        WlanCommandResult result = RunWlanCommand(
+            "/system/bin/toybox nc -z -w 5 " + target + " " + port + " 2>&1");
+        return result.exit_code == 0;
+    };
 
-    // ping 网关
-    if (!gateway.empty() && gateway != "unknown") {
+    std::string gateway = TrimWlanValue(
+        RunWlanCommand("/system/bin/getprop net.wlan0.gateway").output);
+
+    if (!gateway.empty()) {
         logBox->AddLogLine("[INFO] Pinging gateway (" + gateway + ")...", "normal");
         gui_forceRender();
-        std::string gw_result = run_ping(gateway, 1);
-        if (!gw_result.empty() && gw_result.find("0% packet loss") != std::string::npos)
+        if (ping_succeeded(gateway))
             logBox->AddLogLine("[INFO] Gateway ping: OK", "normal");
         else
             logBox->AddLogLine("[ERROR] Gateway ping failed", "error");
@@ -2753,26 +2740,22 @@ int GUIAction::wlantest(std::string arg __unused) {
         logBox->AddLogLine("[ERROR] Could not determine gateway", "error");
     }
 
-    // ping DNS
-    std::string dns = "8.8.8.8";
-    logBox->AddLogLine("[INFO] Testing DNS (" + dns + ")...", "normal");
+    std::string public_address = "1.1.1.1";
+    logBox->AddLogLine("[INFO] Testing Internet route (" + public_address + ")...", "normal");
     gui_forceRender();
-    std::string dns_result = run_ping(dns, 1);
-    if (!dns_result.empty() && dns_result.find("0% packet loss") != std::string::npos)
-        logBox->AddLogLine("[INFO] DNS ping: OK", "normal");
+    if (tcp_succeeded(public_address, "53"))
+        logBox->AddLogLine("[INFO] Internet route: OK", "normal");
     else
-        logBox->AddLogLine("[ERROR] DNS ping failed", "error");
+        logBox->AddLogLine("[ERROR] Internet route failed", "error");
     gui_forceRender();
 
-    // ping Internet
-    std::string internet = "bing.com";
-    logBox->AddLogLine("[INFO] Testing internet connectivity (" + internet + ")...", "normal");
+    std::string hostname = "bing.com";
+    logBox->AddLogLine("[INFO] Testing DNS (" + hostname + ")...", "normal");
     gui_forceRender();
-    std::string internet_result = run_ping(internet, 1);
-    if (!internet_result.empty() && internet_result.find("0% packet loss") != std::string::npos)
-        logBox->AddLogLine("[INFO] Internet: OK", "normal");
+    if (tcp_succeeded(hostname, "80"))
+        logBox->AddLogLine("[INFO] DNS: OK", "normal");
     else
-        logBox->AddLogLine("[ERROR] Internet ping failed", "error");
+        logBox->AddLogLine("[ERROR] DNS lookup or TCP test failed", "error");
     gui_forceRender();
 
     logBox->AddLogLine("[INFO] Network test completed", "normal");
