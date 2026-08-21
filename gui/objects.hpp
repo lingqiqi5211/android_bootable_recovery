@@ -531,6 +531,10 @@ protected:
 	// Returns the size in pixels of a partial item or row size
 	int GetDisplayRemainder();
 
+	// outerHeight is the full box height, padding included.
+	void ApplyBottomPadding(int outerHeight);
+	int GetOuterHeight() { return mRenderH + mBottomPaddingApplied; }
+
 protected:
 	// Background
 	COLOR mBackgroundColor;
@@ -560,6 +564,8 @@ protected:
 	int mItemSpacing; // stores the spacing or padding on the y axis, part of the actualItemHeight
 	int mSeparatorH; // Height of the separator between items
 	COLOR mSeparatorColor; // color of the separator that is between items
+	int mBottomPadding; // requested blank space between the last row and the bottom of the box
+	int mBottomPaddingApplied; // the part of mBottomPadding that fits in the current box height
 
 	// Scrollbar
 	int mFastScrollW; // width of the fastscroll area

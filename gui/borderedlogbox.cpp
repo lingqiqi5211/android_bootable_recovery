@@ -102,6 +102,9 @@ void GUIBorderedLogBox::CalculateRenderPosition()
 	int topRow = mTopRowValue;
 	int bottomRow = mBottomRowValue;
 
+	// Start from the outer height so a repeated call cannot shrink the box.
+	mRenderH = GetOuterHeight();
+
 	if (topRow > 0 && bottomRow > 0 && bottomRow > topRow)
 	{
 		mRenderY = topRow;
@@ -124,7 +127,6 @@ void GUIBorderedLogBox::CalculateRenderPosition()
 	}
 
 	SetRenderPos(mRenderX, mRenderY, mRenderW, mRenderH);
-	SetActionPos(mRenderX, mRenderY, mRenderW, mRenderH);
 }
 
 int GUIBorderedLogBox::Render(void)
@@ -135,11 +137,12 @@ int GUIBorderedLogBox::Render(void)
 	int result = GUIScrollList::Render();
 	
 	if (mBorderWidth > 0) {
+		int outerHeight = GetOuterHeight();
 		gr_color(mBorderColor.red, mBorderColor.green, mBorderColor.blue, mBorderColor.alpha);
 		gr_fill(mRenderX, mRenderY, mRenderW, mBorderWidth);
-		gr_fill(mRenderX, mRenderY + mRenderH - mBorderWidth, mRenderW, mBorderWidth);
-		gr_fill(mRenderX, mRenderY, mBorderWidth, mRenderH);
-		gr_fill(mRenderX + mRenderW - mBorderWidth, mRenderY, mBorderWidth, mRenderH);
+		gr_fill(mRenderX, mRenderY + outerHeight - mBorderWidth, mRenderW, mBorderWidth);
+		gr_fill(mRenderX, mRenderY, mBorderWidth, outerHeight);
+		gr_fill(mRenderX + mRenderW - mBorderWidth, mRenderY, mBorderWidth, outerHeight);
 	}
 	
 	if (GetItemCount() > 0) {

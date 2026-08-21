@@ -3831,7 +3831,7 @@
 				<text>{@wlan_log_hdr=This page is building by Jason}</text>
 			</text>
 
-			<borderedlogbox toprow="%row3_y%" bottomrow="%row14a_y%" borderwidth="2" leftmargin="75" rightmargin="75">
+			<borderedlogbox toprow="%row3_y%" bottomrow="%row14a_y%" bottompadding="12" borderwidth="2" leftmargin="75" rightmargin="75">
 				<placement x="%indent%" w="%content_width%"/>
 				<color foreground="%text_color%" background="%background_color%" border="%accent_color%"/>
 				<font resource="fixed" color="%text_color%" spacing="0"/>
@@ -5268,12 +5268,12 @@
 				<placement x="0" y="%row2_header_y%" w="%screen_width%" h="%slideout_bg_height%"/>
 			</fill>
 
-			<terminal>
+			<terminal bottompadding="12">
 				<condition var1="tw_hide_kb" var2="0"/>
 				<placement x="0" y="%row3_header_y%" w="%screen_width%" h="%console_terminal_height%"/>
 			</terminal>
 
-			<terminal>
+			<terminal bottompadding="12">
 				<condition var1="tw_hide_kb" var2="1"/>
 				<placement x="0" y="%row3_header_y%" w="%screen_width%" h="%slideout_height%"/>
 			</terminal>
@@ -5541,7 +5541,7 @@
 				<placement x="0" y="%row2_header_y%" w="%screen_width%" h="%slideout_bg_height%"/>
 			</fill>
 
-			<console>
+			<console bottompadding="12">
 				<placement x="%indent%" y="%row3_header_y%" w="%content_width%" h="%slideout_height%"/>
 			</console>
 
