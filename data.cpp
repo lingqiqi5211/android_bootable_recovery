@@ -260,6 +260,7 @@ int DataManager::SetValue(const string& varName, const string& value, const int 
 		return -1;
 
 	string test;
+	bool persist_value_changed = false;
 	pthread_mutex_lock(&m_valuesLock);
 	int constChk = mConst.GetValue(varName, test);
 	if (constChk == 0) {
@@ -268,11 +269,18 @@ int DataManager::SetValue(const string& varName, const string& value, const int 
 	}
 
 	if (persist) {
-		mPersist.SetValue(varName, value);
+		int persistChk = mPersist.GetValue(varName, test);
+		if (persistChk != 0 || test != value) {
+			mPersist.SetValue(varName, value);
+			persist_value_changed = true;
+		}
 	} else {
 		int persistChk = mPersist.GetValue(varName, test);
 		if (persistChk == 0) {
-			mPersist.SetValue(varName, value);
+			if (test != value) {
+				mPersist.SetValue(varName, value);
+				persist_value_changed = true;
+			}
 		} else {
 			mData.SetValue(varName, value);
 		}
@@ -289,6 +297,10 @@ int DataManager::SetValue(const string& varName, const string& value, const int 
 		SetBackupFolder();
 	}
 	gui_notifyVarChange(varName.c_str(), value.c_str());
+	if (persist_value_changed && !mBackingFile.empty()) {
+		return SaveValues();
+	}
+
 	return 0;
 }
 
