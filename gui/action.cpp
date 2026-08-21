@@ -2306,6 +2306,23 @@ static bool WpaCommandSucceeded(const std::string& arguments) {
            TrimWlanValue(result.output).find("OK") != std::string::npos;
 }
 
+// scan_results prints a header line first, then one line per visible BSS.
+static size_t CountWlanScanEntries(const std::string& output) {
+    size_t entries = 0;
+    std::istringstream stream(output);
+    std::string line;
+    bool header_seen = false;
+    while (std::getline(stream, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!header_seen) {
+            header_seen = true;
+            continue;
+        }
+        if (!line.empty()) ++entries;
+    }
+    return entries;
+}
+
 int GUIAction::wlanstart(string arg __unused) {
 	GUIBorderedLogBox* logBox = FindWlanLogBox();
 	if (!logBox) {
@@ -2369,8 +2386,27 @@ int GUIAction::wlanscan(std::string arg __unused) {
         return -1;
     }
 
-    usleep(1500 * 1000);
-    WlanCommandResult results = RunWpaCli("scan_results");
+    // Scanning is asynchronous. A full-channel scan including 5GHz measured
+    // 2-3.5s on marble before any result appeared, so the previous fixed wait
+    // made the very first scan (empty BSS cache) report no networks at all.
+    // Poll instead: when the cache is already populated the first poll returns
+    // immediately, so repeat scans stay as responsive as before.
+    static const int kScanPollIntervalUs = 400 * 1000;
+    static const int kScanMaxWaitUs = 8000 * 1000;
+
+    WlanCommandResult results;
+    int waited_us = 0;
+    for (;;) {
+        usleep(kScanPollIntervalUs);
+        waited_us += kScanPollIntervalUs;
+        results = RunWpaCli("scan_results");
+        if (results.exit_code != 0)
+            break;
+        if (CountWlanScanEntries(results.output) > 0)
+            break;
+        if (waited_us >= kScanMaxWaitUs)
+            break;
+    }
     if (results.exit_code != 0) {
         logBox->AddLogLine("[ERROR] Failed to read scan results", "error");
         AddWlanCommandOutput(logBox, results.output, "error");
