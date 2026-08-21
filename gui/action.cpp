@@ -2259,9 +2259,51 @@ static std::string DecodeWlanEscapes(const std::string& value) {
     return decoded;
 }
 
+static std::string HexEncodeWlanValue(const std::string& value) {
+    static const char hex[] = "0123456789abcdef";
+    std::string encoded;
+    encoded.reserve(value.size() * 2);
+    for (unsigned char c : value) {
+        encoded.push_back(hex[c >> 4]);
+        encoded.push_back(hex[c & 0x0f]);
+    }
+    return encoded;
+}
+
+static std::string ShellQuoteWlanValue(const std::string& value) {
+    std::string quoted("'");
+    for (char c : value) {
+        if (c == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted.push_back(c);
+        }
+    }
+    quoted.push_back('\'');
+    return quoted;
+}
+
+static std::string QuoteWpaConfigValue(const std::string& value) {
+    std::string quoted("\"");
+    for (char c : value) {
+        if (c == '\\' || c == '"') {
+            quoted.push_back('\\');
+        }
+        quoted.push_back(c);
+    }
+    quoted.push_back('"');
+    return quoted;
+}
+
 static WlanCommandResult RunWpaCli(const std::string& arguments) {
     return RunWlanCommand("/system/bin/marble_recovery_wpa_cli -iwlan0 "
                           "-p/tmp/recovery/sockets " + arguments + " 2>&1");
+}
+
+static bool WpaCommandSucceeded(const std::string& arguments) {
+    WlanCommandResult result = RunWpaCli(arguments);
+    return result.exit_code == 0 &&
+           TrimWlanValue(result.output).find("OK") != std::string::npos;
 }
 
 int GUIAction::wlanstart(string arg __unused) {
@@ -2403,7 +2445,33 @@ int GUIAction::wlanscan(std::string arg __unused) {
     return 0;
 }
 
-// ===== GUIAction::wlanconnect =====
+static std::string FindWpaNetworkId(const std::string& output) {
+    std::istringstream stream(output);
+    std::string line;
+    std::string network_id;
+    while (std::getline(stream, line)) {
+        line = TrimWlanValue(line);
+        if (line.empty()) continue;
+        bool numeric = true;
+        for (char c : line) {
+            if (c < '0' || c > '9') {
+                numeric = false;
+                break;
+            }
+        }
+        if (numeric) network_id = line;
+    }
+    return network_id;
+}
+
+static bool IsValidWpaPassword(const std::string& password) {
+    if (password.size() < 8 || password.size() > 63) return false;
+    for (unsigned char c : password) {
+        if (c < 0x20 || c == 0x7f) return false;
+    }
+    return true;
+}
+
 int GUIAction::wlanconnect(std::string arg __unused) {
     GUIBorderedLogBox* logBox = FindWlanLogBox();
     if (!logBox) {
@@ -2411,98 +2479,116 @@ int GUIAction::wlanconnect(std::string arg __unused) {
         return -1;
     }
 
-    // 读取选中的 WLAN
     std::string selectedWlan = DataManager::GetStrValue("tw_selected_wlan");
     if (selectedWlan.empty()) {
-        selectedWlan = "MyHomeWiFi";
-        LOGINFO("[DEBUG] SelectedWlan empty, using fallback MyHomeWiFi\n");
+        logBox->AddLogLine("[ERROR] Select a Wi-Fi network first", "error");
+        gui_forceRender();
+        return -1;
     }
 
-    // 获取密码
     std::string password;
     DataManager::GetValue("tw_wlan_password", password);
-
-    // 获取选中的WLAN的加密方式
     std::string encryption = DataManager::GetStrValue("tw_selected_wlan_encryption");
-    
+    DataManager::SetValue("tw_wlan_password", "");
+
+    if (encryption != "Open" && !IsValidWpaPassword(password)) {
+        logBox->AddLogLine("[ERROR] WPA password must be 8-63 printable characters", "error");
+        gui_forceRender();
+        return -1;
+    }
+    if (!StartWlanRuntime(logBox)) {
+        logBox->AddLogLine("[ERROR] WLAN runtime is unavailable", "error");
+        gui_forceRender();
+        return -1;
+    }
+
     logBox->AddLogLine("[INFO] Connecting to network...", "normal");
     logBox->AddLogLine("[INFO] SSID: " + selectedWlan, "normal");
     logBox->AddLogLine("[INFO] Encryption: " + encryption, "normal");
-    
-    if (!password.empty()) {
-        logBox->AddLogLine("[INFO] Using password authentication", "normal");
-    } else {
-        logBox->AddLogLine("[INFO] No password provided (open network)", "normal");
-    }
     gui_forceRender();
 
-    const char* IFACE = "wlan0";
-    const char* CTRL_DIR = "/tmp/recovery/sockets";
-    const char* WPACLI = "wpa_cli";
+    RunWpaCli("remove_network all");
+    WlanCommandResult add_network = RunWpaCli("add_network");
+    std::string network_id = FindWpaNetworkId(add_network.output);
+    if (add_network.exit_code != 0 || network_id.empty()) {
+        logBox->AddLogLine("[ERROR] Unable to create a supplicant network", "error");
+        gui_forceRender();
+        return -1;
+    }
 
-    // 先移除 network 0，保证干净
-    run_command_get_output(std::string(WPACLI) + " -i" + IFACE + " -p" + CTRL_DIR + " remove_network 0");
-    run_command_get_output(std::string(WPACLI) + " -i" + IFACE + " -p" + CTRL_DIR + " add_network");
+    auto fail_network = [&]() {
+        RunWpaCli("remove_network " + network_id);
+        gui_forceRender();
+        return -1;
+    };
 
-    // 设置 SSID
-    std::string cmd_set_ssid = std::string(WPACLI) + " -i" + IFACE + " -p" + CTRL_DIR + " set_network 0 ssid '\"" + selectedWlan + "\"'";
-    run_command_get_output(cmd_set_ssid);
+    if (!WpaCommandSucceeded("set_network " + network_id + " ssid " +
+                             HexEncodeWlanValue(selectedWlan))) {
+        logBox->AddLogLine("[ERROR] Unable to set the selected SSID", "error");
+        return fail_network();
+    }
 
-    // ========= 根据加密方式设置 key_mgmt =========
     std::string key_mgmt;
     if (encryption == "Open") {
         key_mgmt = "NONE";
-        logBox->AddLogLine("[INFO] Using open network authentication", "normal");
     } else if (encryption == "WPA3") {
         key_mgmt = "SAE";
-        logBox->AddLogLine("[INFO] Using WPA3-SAE authentication", "normal");
-    } else if (encryption == "WPA2") {
+    } else if (encryption == "WPA2/WPA3") {
         key_mgmt = "WPA-PSK";
-        logBox->AddLogLine("[INFO] Using WPA2-PSK authentication", "normal");
-    } else if (encryption == "WPA") {
-        key_mgmt = "WPA-PSK";
-        logBox->AddLogLine("[INFO] Using WPA-PSK authentication", "normal");
+        logBox->AddLogLine("[INFO] Transition network: preferring WPA2 compatibility", "normal");
     } else {
-        // 默认使用WPA-PSK，兼容旧版本
         key_mgmt = "WPA-PSK";
-        logBox->AddLogLine("[INFO] Using default WPA-PSK authentication", "normal");
     }
 
-    std::string cmd_set_key_mgmt = std::string(WPACLI) + " -i" + IFACE + " -p" + CTRL_DIR + " set_network 0 key_mgmt " + key_mgmt;
-    run_command_get_output(cmd_set_key_mgmt);
+    if (!WpaCommandSucceeded("set_network " + network_id + " key_mgmt " + key_mgmt)) {
+        logBox->AddLogLine("[ERROR] Unable to set the authentication mode", "error");
+        return fail_network();
+    }
 
-    // 设置 PSK（仅当需要密码时）
-    if (!password.empty()) {
-        if (encryption == "Open") {
-            logBox->AddLogLine("[WARNING] Open network should not have password, ignoring password", "warning");
-        } else {
-            uint8_t psk[32];
-			std::string cmd_set_psk = std::string(WPACLI) + " -i" + IFACE + " -p" + CTRL_DIR + " set_network 0 psk '\"" + password + "\"'";
-            run_command_get_output(cmd_set_psk);
+    if (encryption != "Open") {
+        std::string value = ShellQuoteWlanValue(QuoteWpaConfigValue(password));
+        bool credentials_set = true;
+        if (encryption == "WPA3") {
+            credentials_set = WpaCommandSucceeded(
+                "set_network " + network_id + " sae_password " + value);
         }
-    } else {
-        if (encryption != "Open") {
-            logBox->AddLogLine("[WARNING] Password required for encrypted network", "warning");
-            // 对于加密网络但没有密码的情况，可能需要特殊处理
-            if (encryption == "WPA3" || encryption == "WPA2" || encryption == "WPA") {
-                logBox->AddLogLine("[ERROR] Password is required for " + encryption + " network", "error");
-                gui_forceRender();
-                return -1;
-            }
+        if (credentials_set && encryption != "WPA3") {
+            credentials_set = WpaCommandSucceeded(
+                "set_network " + network_id + " psk " + value);
+        }
+        if (!credentials_set) {
+            logBox->AddLogLine("[ERROR] Unable to configure network credentials", "error");
+            return fail_network();
+        }
+
+        if (encryption == "WPA3" &&
+            (!WpaCommandSucceeded("set_network " + network_id + " proto RSN") ||
+             !WpaCommandSucceeded("set_network " + network_id + " sae_pwe 2") ||
+             !WpaCommandSucceeded("set_network " + network_id + " ieee80211w 2"))) {
+            logBox->AddLogLine("[ERROR] Unable to configure WPA3-SAE requirements", "error");
+            return fail_network();
+        }
+        if (encryption == "WPA2/WPA3" &&
+            !WpaCommandSucceeded("set_network " + network_id + " ieee80211w 1")) {
+            logBox->AddLogLine("[ERROR] Unable to enable protected management frames", "error");
+            return fail_network();
         }
     }
 
-    // 启用 network 0
-    run_command_get_output(std::string(WPACLI) + " -i" + IFACE + " -p" + CTRL_DIR + " enable_network 0");
+    password.assign(password.size(), '\0');
+    password.clear();
+    if (!WpaCommandSucceeded("select_network " + network_id)) {
+        logBox->AddLogLine("[ERROR] Unable to select the configured network", "error");
+        return fail_network();
+    }
 
     logBox->AddLogLine("[INFO] Authenticating...", "normal");
     gui_forceRender();
 
-    // 等待连接完成
     bool connected = false;
-    for (int i = 0; i < 20; i++) {
-        std::string status = run_command_get_output(std::string(WPACLI) + " -i" + IFACE + " -p" + CTRL_DIR + " status");
-        if (status.find("wpa_state=COMPLETED") != std::string::npos) {
+    for (int i = 0; i < 30; ++i) {
+        WlanCommandResult status = RunWpaCli("status");
+        if (status.output.find("wpa_state=COMPLETED") != std::string::npos) {
             connected = true;
             break;
         }
@@ -2511,27 +2597,23 @@ int GUIAction::wlanconnect(std::string arg __unused) {
 
     if (!connected) {
         logBox->AddLogLine("[ERROR] Failed to connect (timeout or authentication error)", "error");
+        return fail_network();
+    }
+
+    logBox->AddLogLine("[INFO] Wi-Fi link established, requesting an IP address...", "normal");
+    gui_forceRender();
+    WlanCommandResult dhcp =
+        RunWlanCommand("/system/bin/marble-wifi-dhcp wlan0 2>&1");
+    if (dhcp.exit_code != 0) {
+        logBox->AddLogLine("[ERROR] DHCP failed", "error");
+        AddWlanCommandOutput(logBox, dhcp.output, "error");
         gui_forceRender();
         return -1;
     }
 
-    // 请求 IP
-    logBox->AddLogLine("[INFO] Wi-Fi link established, requesting IP with dhcpcd...", "normal");
-    gui_forceRender();
-    run_command_get_output("dhcpcd wlan0");
-    ::sleep(5); // 等 dhcpcd 配置完成
+    std::string ip_address = TrimWlanValue(RunWlanCommand("/system/bin/getprop net.wlan0.ipaddress").output);
+    std::string gateway = TrimWlanValue(RunWlanCommand("/system/bin/getprop net.wlan0.gateway").output);
 
-    // 获取 IP 地址
-    std::string ip_address = run_command_get_output("ifconfig wlan0 | grep 'inet ' | awk -F'[: ]+' '{print $4}'");
-    while (!ip_address.empty() && (ip_address.back() == '\n' || ip_address.back() == '\r'))
-        ip_address.pop_back();
-
-    // 获取网关
-    std::string gateway = run_command_get_output("netstat -rn | grep wlan0 | grep UG | awk '{print $2}'");
-    while (!gateway.empty() && (gateway.back() == '\n' || gateway.back() == '\r'))
-        gateway.pop_back();
-
-    // 获取 DNS
     std::vector<std::string> dns_servers;
     FILE* fp = fopen("/etc/resolv.conf", "r");
     if (fp) {
@@ -2542,10 +2624,7 @@ int GUIAction::wlanconnect(std::string arg __unused) {
                 std::istringstream ls(line);
                 std::string key, value;
                 ls >> key >> value;
-                if (!value.empty()) {
-                    while (!value.empty() && (value.back() == '\n' || value.back() == '\r')) value.pop_back();
-                    dns_servers.push_back(value);
-                }
+                if (!value.empty()) dns_servers.push_back(value);
             }
         }
         fclose(fp);
