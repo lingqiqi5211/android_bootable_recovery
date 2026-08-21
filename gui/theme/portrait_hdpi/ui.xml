@@ -578,7 +578,7 @@
 		</template>
 
 		<template name="console">
-			<console>
+			<console bottompadding="12">
 				<placement x="%indent%" y="%row2_y%" w="%content_width%" h="%console_height%"/>
 			</console>
 
@@ -592,7 +592,7 @@
 		</template>
 
 		<template name="console_terminal">
-			<console>
+			<console bottompadding="12">
 				<placement x="%indent%" y="%row2_y%" w="content_width" h="%console_terminal_height%"/>
 			</console>
 

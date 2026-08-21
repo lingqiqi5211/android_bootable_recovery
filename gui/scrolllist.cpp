@@ -18,6 +18,8 @@
 
 #include <string.h>
 
+#include <algorithm>
+
 extern "C" {
 #include "../twcommon.h"
 }
@@ -38,6 +40,7 @@ GUIScrollList::GUIScrollList(xml_node<>* node) : GUIObject(node)
 	firstDisplayedItem = mItemSpacing = mFontHeight = mSeparatorH = y_offset = scrollingSpeed = 0;
 	maxIconWidth = maxIconHeight =  mHeaderIconHeight = mHeaderIconWidth = 0;
 	mHeaderSeparatorH = mHeaderH = actualItemHeight = 0;
+	mBottomPadding = mBottomPaddingApplied = 0;
 	mHeaderIsStatic = false;
 	mBackground = mHeaderIcon = NULL;
 	mFont = NULL;
@@ -77,7 +80,9 @@ GUIScrollList::GUIScrollList(xml_node<>* node) : GUIObject(node)
 
 	// Load the placement
 	LoadPlacement(FindNode(node, "placement"), &mRenderX, &mRenderY, &mRenderW, &mRenderH);
-	SetActionPos(mRenderX, mRenderY, mRenderW, mRenderH);
+
+	mBottomPadding = std::max(0, LoadAttrIntScaleY(node, "bottompadding"));
+	ApplyBottomPadding(mRenderH);
 
 	// Load the font, and possibly override the color
 	child = FindNode(node, "font");
@@ -197,8 +202,16 @@ int GUIScrollList::Render(void)
 	gr_color(mBackgroundColor.red, mBackgroundColor.green, mBackgroundColor.blue, mBackgroundColor.alpha);
 	gr_fill(mRenderX, mRenderY + mHeaderH, mRenderW, mRenderH - mHeaderH);
 
-	// don't paint outside of the box
-	gr_clip(mRenderX, mRenderY, mRenderW, mRenderH);
+	// Keep the reserved strip blank.
+	if (mBottomPaddingApplied > 0)
+		gr_fill(mRenderX, mRenderY + mRenderH, mRenderW, mBottomPaddingApplied);
+
+	// actualItemHeight is the font's nominal height, so the last row's
+	// descenders need to reach into the already-painted strip.
+	int clip_height = mRenderH;
+	if (mBottomPaddingApplied > 0 && actualItemHeight > 0)
+		clip_height += std::min(mBottomPaddingApplied, actualItemHeight / 8);
+	gr_clip(mRenderX, mRenderY, mRenderW, clip_height);
 
 	// Next, render the background resource (if it exists)
 	if (mBackground && mBackground->GetResource())
@@ -610,6 +623,14 @@ int GUIScrollList::NotifyVarChange(const std::string& varName, const std::string
 	return 0;
 }
 
+void GUIScrollList::ApplyBottomPadding(int outerHeight)
+{
+	// Requested value is kept intact so a later resize can honour it in full.
+	mBottomPaddingApplied = std::min(mBottomPadding, std::max(0, outerHeight - 1));
+	mRenderH = outerHeight - mBottomPaddingApplied;
+	SetActionPos(mRenderX, mRenderY, mRenderW, outerHeight);
+}
+
 int GUIScrollList::SetRenderPos(int x, int y, int w /* = 0 */, int h /* = 0 */)
 {
 	mRenderX = x;
@@ -617,9 +638,13 @@ int GUIScrollList::SetRenderPos(int x, int y, int w /* = 0 */, int h /* = 0 */)
 	if (w || h)
 	{
 		mRenderW = w;
-		mRenderH = h;
+		// h is the full height of the box, padding included.
+		ApplyBottomPadding(h);
 	}
-	SetActionPos(mRenderX, mRenderY, mRenderW, mRenderH);
+	else
+	{
+		SetActionPos(mRenderX, mRenderY, mRenderW, GetOuterHeight());
+	}
 	mUpdate = 1;
 	return 0;
 }
