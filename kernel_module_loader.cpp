@@ -34,6 +34,19 @@ BOOT_MODE KernelModuleLoader::Get_Boot_Mode() {
 }
 
 bool KernelModuleLoader::Load_Vendor_Modules() {
+#ifdef TW_VENDOR_MODULES_PREPARE_SCRIPT
+	static bool prepare_script_completed = false;
+	if (!prepare_script_completed) {
+		const std::string prepare_script(EXPAND(TW_VENDOR_MODULES_PREPARE_SCRIPT));
+		LOGINFO("Running vendor module prepare script: %s\n", prepare_script.c_str());
+		if (TWFunc::Exec_Cmd(prepare_script) != 0) {
+			LOGERR("Vendor module prepare script failed: %s\n", prepare_script.c_str());
+		} else {
+			prepare_script_completed = true;
+		}
+	}
+#endif
+
 	// check /lib/modules (ramdisk vendor_boot)
 	// check /lib/modules/N.N (ramdisk vendor_boot)
 	// check /lib/modules/N.N-gki (ramdisk vendor_boot)
