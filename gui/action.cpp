@@ -2296,7 +2296,7 @@ static std::string QuoteWpaConfigValue(const std::string& value) {
 }
 
 static WlanCommandResult RunWpaCli(const std::string& arguments) {
-    return RunWlanCommand("/system/bin/marble_recovery_wpa_cli -iwlan0 "
+    return RunWlanCommand("/system/bin/wpa_cli -iwlan0 "
                           "-p/tmp/recovery/sockets " + arguments + " 2>&1");
 }
 
