@@ -2386,11 +2386,9 @@ int GUIAction::wlanscan(std::string arg __unused) {
         return -1;
     }
 
-    // Scanning is asynchronous. A full-channel scan including 5GHz measured
-    // 2-3.5s on marble before any result appeared, so the previous fixed wait
-    // made the very first scan (empty BSS cache) report no networks at all.
-    // Poll instead: when the cache is already populated the first poll returns
-    // immediately, so repeat scans stay as responsive as before.
+    // Scanning is asynchronous and a cold BSS cache needs a few seconds, more
+    // than any fixed wait short enough to keep repeat scans responsive. Poll
+    // instead: a warm cache returns on the first pass.
     static const int kScanPollIntervalUs = 400 * 1000;
     static const int kScanMaxWaitUs = 8000 * 1000;
 
