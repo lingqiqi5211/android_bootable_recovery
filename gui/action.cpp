@@ -2237,7 +2237,7 @@ static void AddWlanCommandOutput(GUIBorderedLogBox* logBox,
 
 static bool StartWlanRuntime(GUIBorderedLogBox* logBox) {
     WlanCommandResult result =
-        RunWlanCommand("/system/bin/marble-wifi-control start 2>&1");
+        RunWlanCommand("/system/bin/taro-wifi-control start 2>&1");
     if (result.exit_code != 0) {
         AddWlanCommandOutput(logBox, result.output, "error");
         return false;
@@ -2361,7 +2361,7 @@ int GUIAction::wlanstop(string arg __unused) {
 
 	logBox->AddLogLine("[INFO] Stopping WLAN supplicant...", "normal");
 	WlanCommandResult result =
-		RunWlanCommand("/system/bin/marble-wifi-control stop 2>&1");
+		RunWlanCommand("/system/bin/taro-wifi-control stop 2>&1");
 	if (result.exit_code != 0) {
 		AddWlanCommandOutput(logBox, result.output, "error");
 		gui_forceRender();
@@ -2660,7 +2660,7 @@ int GUIAction::wlanconnect(std::string arg __unused) {
     logBox->AddLogLine("[INFO] Wi-Fi link established, requesting an IP address...", "normal");
     gui_forceRender();
     WlanCommandResult dhcp =
-        RunWlanCommand("/system/bin/marble-wifi-dhcp wlan0 2>&1");
+        RunWlanCommand("/system/bin/taro-wifi-dhcp wlan0 2>&1");
     if (dhcp.exit_code != 0) {
         logBox->AddLogLine("[ERROR] DHCP failed", "error");
         AddWlanCommandOutput(logBox, dhcp.output, "error");
