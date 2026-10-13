@@ -19,6 +19,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <linux/input.h>
+#include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -51,7 +52,7 @@
 #include "twcommon.h"
 #include "twinstall.h"
 #include "twinstall/adb_install.h"
-#include "twrp-functions.hpp"
+#include "twrp_functions.hpp"
 #include "twrpRepacker.hpp"
 #include "twrpminui/minui.h"
 #include "twrpperf/perf_manager.hpp"
@@ -278,7 +279,7 @@ GUIAction::GUIAction(rapidxml::xml_node<>* node)
 		attr = child->first_attribute("key");
 		if (attr)
 		{
-			std::vector<std::string> keys = TWFunc::Split_String(attr->value(), "+");
+			std::vector<std::string> keys = TWFunc::SplitString(attr->value(), "+");
 			for (size_t i = 0; i < keys.size(); ++i)
 			{
 				const int key = getKeyByName(keys[i]);
@@ -392,11 +393,11 @@ int GUIAction::flash_zip(std::string filename, int* wipe_cache)
 		return -1;
 	}
 
-	if (!TWFunc::Path_Exists(filename)) {
+	if (!TWFunc::IsPathExists(filename)) {
 		if (!PartitionManager.Mount_By_Path(filename, true)) {
 			return -1;
 		}
-		if (!TWFunc::Path_Exists(filename)) {
+		if (!TWFunc::IsPathExists(filename)) {
 			gui_msg(Msg(msg::kError, "unable_to_locate=Unable to locate {1}.")(filename));
 			return -1;
 		}
@@ -419,7 +420,7 @@ int GUIAction::flash_zip(std::string filename, int* wipe_cache)
 			DataManager::SetValue("tw_operation", "Configuring TWRP");
 			DataManager::SetValue("tw_partition", "");
 			gui_msg("config_twrp=Configuring TWRP...");
-			if (TWFunc::Exec_Cmd("/system/bin/installTwrp reinstall") < 0)
+			if (TWFunc::ExecCmd("/system/bin/installTwrp reinstall") < 0)
 			{
 				gui_msg("config_twrp_err=Unable to configure TWRP with this kernel.");
 			}
@@ -691,12 +692,12 @@ int GUIAction::copylog(std::string arg __unused)
 		PartitionManager.Mount_Current_Storage(true);
 		curr_storage = DataManager::GetCurrentStoragePath();
 		dst = curr_storage + "/recovery.log";
-		TWFunc::copy_file("/tmp/recovery.log", dst.c_str(), 0755);
+		TWFunc::CopyFile("/tmp/recovery.log", dst.c_str(), 0755);
 		tw_set_default_metadata(dst.c_str());
 		if (copy_kernel_log)
-			TWFunc::copy_kernel_log(curr_storage);
+			TWFunc::CopyKernelLog(curr_storage);
 		if (copy_logcat)
-			TWFunc::copy_logcat(curr_storage);
+			TWFunc::CopyLogcat(curr_storage);
 		sync();
 		gui_msg(Msg("copy_log=Copied recovery log to {1}")(dst));
 	} else
@@ -783,7 +784,7 @@ int GUIAction::setguitimezone(std::string arg __unused)
 		NewTimeZone += DSTZone;
 
 	DataManager::SetValue(TW_TIME_ZONE_VAR, NewTimeZone);
-	DataManager::update_tz_environment_variables();
+	DataManager::UpdateTimezoneEnvironment();
 	return 0;
 }
 
@@ -855,7 +856,7 @@ int GUIAction::appenddatetobackupname(std::string arg __unused)
 	operation_start("AppendDateToBackupName");
 	std::string Backup_Name;
 	DataManager::GetValue(TW_BACKUP_NAME, Backup_Name);
-	Backup_Name += TWFunc::Get_Current_Date();
+	Backup_Name += TWFunc::GetCurrentDate();
 	if (Backup_Name.size() > MAX_BACKUP_NAME_LEN)
 		Backup_Name.resize(MAX_BACKUP_NAME_LEN);
 	DataManager::SetValue(TW_BACKUP_NAME, Backup_Name);
@@ -868,7 +869,7 @@ int GUIAction::appenddatetobackupname(std::string arg __unused)
 int GUIAction::generatebackupname(std::string arg __unused)
 {
 	operation_start("GenerateBackupName");
-	TWFunc::Auto_Generate_Backup_Name();
+	TWFunc::AutoGenerateBackupName();
 	operation_end(0);
 	return 0;
 }
@@ -946,19 +947,19 @@ int GUIAction::getpartitiondetails(std::string arg)
 					DataManager::SetValue("tw_partition_can_resize", 1);
 				else
 					DataManager::SetValue("tw_partition_can_resize", 0);
-				if (TWFunc::Path_Exists("/system/bin/mkfs.fat"))
+				if (TWFunc::IsPathExists("/system/bin/mkfs.fat"))
 					DataManager::SetValue("tw_partition_vfat", 1);
 				else
 					DataManager::SetValue("tw_partition_vfat", 0);
-				if (TWFunc::Path_Exists("/system/bin/mkfs.exfat"))
+				if (TWFunc::IsPathExists("/system/bin/mkfs.exfat"))
 					DataManager::SetValue("tw_partition_exfat", 1);
 				else
 					DataManager::SetValue("tw_partition_exfat", 0);
-				if (TWFunc::Path_Exists("/system/bin/make_f2fs"))
+				if (TWFunc::IsPathExists("/system/bin/make_f2fs"))
 					DataManager::SetValue("tw_partition_f2fs", 1);
 				else
 					DataManager::SetValue("tw_partition_f2fs", 0);
-				if (TWFunc::Path_Exists("/system/bin/mke2fs"))
+				if (TWFunc::IsPathExists("/system/bin/mke2fs"))
 					DataManager::SetValue("tw_partition_ext", 1);
 				else
 					DataManager::SetValue("tw_partition_ext", 0);
@@ -990,7 +991,7 @@ int GUIAction::screenshot(std::string arg __unused)
 		strcpy(path, "/tmp/");
 	}
 
-	if (!TWFunc::Create_Dir_Recursive(path, 0775, uid, gid))
+	if (!TWFunc::CreateDirRecursive(path, 0775, uid, gid))
 		return 0;
 
 	tm = time(NULL);
@@ -1019,7 +1020,7 @@ int GUIAction::screenshot(std::string arg __unused)
 
 int GUIAction::setbrightness(std::string arg)
 {
-	return TWFunc::Set_Brightness(arg);
+	return TWFunc::SetBrightness(arg);
 }
 
 int GUIAction::fileexists(std::string arg)
@@ -1038,11 +1039,11 @@ int GUIAction::fileexists(std::string arg)
 #ifdef TW_OZIP_DECRYPT_KEY
 int GUIAction::ozip_decrypt(std::string zip_path)
 {
-	if (!TWFunc::Path_Exists("/system/bin/ozip_decrypt")) {
+	if (!TWFunc::IsPathExists("/system/bin/ozip_decrypt")) {
 		return 1;
 	}
 	gui_msg("ozip_decrypt_decryption=Starting Ozip Decryption...");
-	TWFunc::Exec_Cmd("ozip_decrypt " + (std::string)TW_OZIP_DECRYPT_KEY + " '" + zip_path + "'");
+	TWFunc::ExecCmd("ozip_decrypt " + (std::string)TW_OZIP_DECRYPT_KEY + " '" + zip_path + "'");
 	gui_msg("ozip_decrypt_finish=Ozip Decryption Finished!");
 	return 0;
 }
@@ -1068,7 +1069,7 @@ int GUIAction::flash(std::string arg)
 			}
 			zip_filename = (zip_filename.substr(0, zip_filename.size() - 4)).append("zip");
 			zip_path = (zip_path.substr(0, zip_path.size() - 4)).append("zip");
-			if (!TWFunc::Path_Exists(zip_path)) {
+			if (!TWFunc::IsPathExists(zip_path)) {
 				LOGERR("Unable to find decrypted zip");
 				break;
 			}
@@ -1226,7 +1227,7 @@ int GUIAction::nandroid(std::string arg)
 			DataManager::GetValue(TW_BACKUP_NAME, Backup_Name);
 			std::string auto_gen = gui_lookup("auto_generate", "(Auto Generate)");
 			if (Backup_Name == auto_gen || Backup_Name == gui_lookup("curr_date", "(Current Date)") || Backup_Name == "0" || Backup_Name == "(" || PartitionManager.Check_Backup_Name(Backup_Name, true, true) == 0) {
-				ret = PartitionManager.Run_Backup(false);
+				ret = PartitionManager.Run_Backup();
 				DataManager::SetValue("tw_encrypt_backup", 0); // reset value so we don't encrypt every subsequent backup
 				if (!PartitionManager.stop_backup) {
 					if (ret == false)
@@ -1246,24 +1247,12 @@ int GUIAction::nandroid(std::string arg)
 			DataManager::SetValue(TW_BACKUP_NAME, auto_gen);
 		} else if (arg == "restore") {
 			std::string Restore_Name;
-			int gui_adb_backup;
 
 			DataManager::GetValue("tw_restore", Restore_Name);
-			DataManager::GetValue("tw_enable_adb_backup", gui_adb_backup);
-			if (gui_adb_backup) {
-				DataManager::SetValue("tw_operation_state", 1);
-				if (TWFunc::stream_adb_backup(Restore_Name) == 0)
-					ret = 0; // success
-				else
-					ret = 1; // failure
-				DataManager::SetValue("tw_enable_adb_backup", 0);
-				ret = 0; // assume success???
-			} else {
-				if (PartitionManager.Run_Restore(Restore_Name))
-					ret = 0; // success
-				else
-					ret = 1; // failure
-			}
+			if (PartitionManager.Run_Restore(Restore_Name))
+				ret = 0; // success
+			else
+				ret = 1; // failure
 		} else {
 			operation_end(1); // invalid arg specified, fail
 			return -1;
@@ -1317,7 +1306,7 @@ int GUIAction::dd(std::string arg)
 		simulate_progress_bar();
 	} else {
 		std::string cmd = "dd " + arg;
-		TWFunc::Exec_Cmd(cmd);
+		TWFunc::ExecCmd(cmd);
 	}
 	operation_end(0);
 	return 0;
@@ -1354,7 +1343,7 @@ int GUIAction::cmd(std::string arg)
 	if (simulate) {
 		simulate_progress_bar();
 	} else {
-		op_status = TWFunc::Exec_Cmd(arg);
+		op_status = TWFunc::ExecCmd(arg);
 		if (op_status != 0)
 			op_status = 1;
 	}
@@ -1524,7 +1513,7 @@ int GUIAction::adbsideload(std::string arg __unused)
 		operation_end(0);
 	} else {
 		gui_msg("start_sideload=Starting ADB sideload feature...");
-		bool mtp_was_enabled = TWFunc::Toggle_MTP(false);
+		bool mtp_was_enabled = TWFunc::ToggleMtp(false);
 
 		// wait for the adb connection
 		Device::BuiltinAction reboot_action = Device::REBOOT_BOOTLOADER;
@@ -1545,7 +1534,7 @@ int GUIAction::adbsideload(std::string arg __unused)
 			if (wipe_dalvik)
 				PartitionManager.Wipe_Dalvik_Cache();
 		}
-		TWFunc::Toggle_MTP(mtp_was_enabled);
+		TWFunc::ToggleMtp(mtp_was_enabled);
 		operation_end(ret);
 	}
 	return 0;
@@ -1633,7 +1622,7 @@ int GUIAction::decrypt_backup(std::string arg __unused)
 		Restore_Path += "/";
 		DataManager::GetValue("tw_restore_password", Password);
 		TWFunc::SetPerformanceMode(true);
-		if (TWFunc::Try_Decrypting_Backup(Restore_Path, Password))
+		if (TWFunc::TryDecryptingBackup(Restore_Path, Password))
 			op_status = 0; // success
 		else
 			op_status = 1; // fail
@@ -1968,7 +1957,7 @@ int GUIAction::fixabrecoverybootloop(std::string arg __unused)
 	operation_start("Repack Image");
 	if (!simulate)
 	{
-		if (!TWFunc::Path_Exists("/system/bin/magiskboot")) {
+		if (!TWFunc::IsPathExists("/system/bin/magiskboot")) {
 			LOGERR("Image repacking tool not present in this TWRP build!");
 			goto exit;
 		}
@@ -1985,15 +1974,15 @@ int GUIAction::fixabrecoverybootloop(std::string arg __unused)
 		DataManager::SetProgress(.25);
 		gui_msg("fixing_recovery_loop_patch=Patching kernel...");
 		std::string command = "cd " REPACK_ORIG_DIR " && /system/bin/magiskboot hexpatch kernel 77616E745F696E697472616D667300 736B69705F696E697472616D667300";
-		if (TWFunc::Exec_Cmd(command) != 0) {
+		if (TWFunc::ExecCmd(command) != 0) {
 			gui_msg(Msg(msg::kError, "fix_recovery_loop_patch_error=Error patching kernel."));
 			goto exit;
 		}
 		std::string header_path = REPACK_ORIG_DIR;
 		header_path += "header";
-		if (TWFunc::Path_Exists(header_path)) {
+		if (TWFunc::IsPathExists(header_path)) {
 			command = "cd " REPACK_ORIG_DIR " && sed -i \"s|$(grep '^cmdline=' header | cut -d= -f2-)|$(grep '^cmdline=' header | cut -d= -f2- | sed -e 's/skip_override//' -e 's/  */ /g' -e 's/[ \t]*$//')|\" header";
-			if (TWFunc::Exec_Cmd(command) != 0) {
+			if (TWFunc::ExecCmd(command) != 0) {
 				gui_msg(Msg(msg::kError, "fix_recovery_loop_patch_error=Error patching kernel."));
 				goto exit;
 			}
@@ -2001,7 +1990,7 @@ int GUIAction::fixabrecoverybootloop(std::string arg __unused)
 		DataManager::SetProgress(.5);
 		gui_msg(Msg("repacking_image=Repacking {1}...")(part->Display_Name));
 		command = "cd " REPACK_ORIG_DIR " && /system/bin/magiskboot repack " REPACK_ORIG_DIR "boot.img";
-		if (TWFunc::Exec_Cmd(command) != 0) {
+		if (TWFunc::ExecCmd(command) != 0) {
 			gui_msg(Msg(msg::kError, "repack_error=Error repacking image."));
 			goto exit;
 		}
@@ -2014,7 +2003,7 @@ int GUIAction::fixabrecoverybootloop(std::string arg __unused)
 			goto exit;
 		}
 		DataManager::SetProgress(1);
-		TWFunc::removeDir(REPACK_ORIG_DIR, false);
+		TWFunc::RemoveDir(REPACK_ORIG_DIR, false);
 	} else
 		simulate_progress_bar();
 	op_status = 0;
@@ -2107,7 +2096,7 @@ int GUIAction::applycustomtwrpfolder(std::string arg __unused)
 	std::string prevFolder = storageFolder + DataManager::GetStrValue(TW_RECOVERY_FOLDER_VAR);
 	bool ret = false;
 
-	if (TWFunc::Path_Exists(newFolder)) {
+	if (TWFunc::IsPathExists(newFolder)) {
 		gui_msg(Msg(msg::kError, "tw_folder_exists=A folder with that name already exists!"));
 	} else {
 		ret = true;
@@ -2116,13 +2105,13 @@ int GUIAction::applycustomtwrpfolder(std::string arg __unused)
 	if (newFolder != prevFolder && ret) {
 		// Nothing has been put under the old name until a backup or a theme
 		// lands there, so there may be nothing to move.
-		if (TWFunc::Path_Exists(prevFolder))
-			ret = TWFunc::Exec_Cmd("mv -f \"" + prevFolder + "\" \"" + newFolder + '\"') == 0;
+		if (TWFunc::IsPathExists(prevFolder))
+			ret = TWFunc::ExecCmd("mv -f \"" + prevFolder + "\" \"" + newFolder + '\"') == 0;
 	} else {
 		gui_msg(Msg(msg::kError, "tw_folder_exists=A folder with that name already exists!"));
 	}
 
-	if (ret) ret = TWFunc::Recursive_Mkdir(newBackupFolder) ? true : false;
+	if (ret) ret = TWFunc::RecursiveMkdir(newBackupFolder) ? true : false;
 
 
 	if (ret) {

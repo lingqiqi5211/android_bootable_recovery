@@ -40,19 +40,15 @@
 
 #include "blanktimer.hpp"
 #include "gui.hpp"
-#include "pages.h"
+#include "pages.hpp"
 #include "objects.hpp"
 #include "partitions.hpp"
 #include "rapidxml.hpp"
 #include "twcommon.h"
-#include "twrp-functions.hpp"
+#include "twrp_functions.hpp"
 #include "twrpminui/minui.h"
 #include "variables.h"
 #include "ziputil.h"
-
-extern "C" {
-#include "gui.h"
-}
 
 #define TW_THEME_VER_ERR -2
 
@@ -1318,7 +1314,7 @@ char* PageManager::LoadFileToBuffer(std::string filename, ZipArchiveHandle packa
 }
 
 void PageManager::LoadLanguageListDir(std::string dir) {
-	if (!TWFunc::Path_Exists(dir)) {
+	if (!TWFunc::IsPathExists(dir)) {
 		LOGERR("LoadLanguageListDir '%s' path not found\n", dir.c_str());
 		return;
 	}
@@ -1372,10 +1368,10 @@ void PageManager::LoadLanguageListDir(std::string dir) {
 
 void PageManager::LoadLanguageList(ZipArchiveHandle package) {
 	Language_List.clear();
-	if (TWFunc::Path_Exists(TWRES "customlanguages"))
-		TWFunc::removeDir(TWRES "customlanguages", true);
+	if (TWFunc::IsPathExists(TWRES "customlanguages"))
+		TWFunc::RemoveDir(TWRES "customlanguages", true);
 	if (package) {
-		TWFunc::Recursive_Mkdir(TWRES "customlanguages");
+		TWFunc::RecursiveMkdir(TWRES "customlanguages");
 		ExtractPackageRecursive(package, "", TWRES "customlanguages", nullptr, nullptr);
 
 		// package->ExtractRecursive("languages", TWRES "customlanguages/");
@@ -1389,7 +1385,7 @@ void PageManager::LoadLanguageList(ZipArchiveHandle package) {
 
 void PageManager::LoadLanguage(std::string filename) {
 	std::string actual_filename;
-	if (TWFunc::Path_Exists(TWRES "customlanguages/" + filename + ".xml"))
+	if (TWFunc::IsPathExists(TWRES "customlanguages/" + filename + ".xml"))
 		actual_filename = TWRES "customlanguages/" + filename + ".xml";
 	else
 		actual_filename = TWRES "languages/" + filename + ".xml";
@@ -1457,7 +1453,7 @@ int PageManager::LoadPackage(std::string name, std::string package, std::string 
 		tw_w_offset = 0;
 		tw_h_offset = 0;
 		apply_offset_properties();
-		if (!TWFunc::Path_Exists(package)) {
+		if (!TWFunc::IsPathExists(package)) {
 			return -1;
 		}
 

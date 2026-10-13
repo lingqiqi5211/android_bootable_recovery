@@ -11,7 +11,7 @@
 #include "data.hpp"
 #include "partitions.hpp"
 #include "twcommon.h"
-#include "twrp-functions.hpp"
+#include "twrp_functions.hpp"
 #include "twrp_operation.h"
 #include "variables.h"
 

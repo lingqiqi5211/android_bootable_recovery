@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 #include <vector>
 
 #include <android-base/strings.h>
@@ -29,11 +30,10 @@
 #include "objects.hpp"
 #include "rapidxml.hpp"
 #include "twcommon.h"
-#include "twrp-functions.hpp"
-#include "twrpadbbu/libtwrpadbbu.hpp"
+#include "twrp_functions.hpp"
 #include "twrpminui/minui.h"
 
-#include "../partitions.hpp"
+namespace fs = std::filesystem;
 
 int GUIFileSelector::mSortOrder = 0;
 
@@ -238,10 +238,6 @@ bool GUIFileSelector::fileSort(FileData d1, FileData d2)
 
 int GUIFileSelector::GetFileList(const std::string folder)
 {
-	DIR* d;
-	struct dirent* de;
-	struct stat st;
-
 	// Clear all data
 	mFolderList.clear();
 	mFileList.clear();
@@ -250,18 +246,16 @@ int GUIFileSelector::GetFileList(const std::string folder)
 	// leave the path variable pointing somewhere nobody asked for. Only make
 	// it while the storage is up, or it lands on the ramdisk under a mount
 	// point with nothing mounted on it.
-	if (mPathCreate && !TWFunc::Path_Exists(folder) && PartitionManager.Is_Mounted_By_Path(folder))
-		TWFunc::Recursive_Mkdir(folder);
+	if (mPathCreate && !TWFunc::IsPathExists(folder) && PartitionManager.Is_Mounted_By_Path(folder))
+		TWFunc::RecursiveMkdir(folder);
 
-	d = opendir(folder.c_str());
-	if (d == NULL) {
+	std::error_code ec;
+	fs::directory_iterator dir_iter(folder, ec);
+	if (ec) {
 		LOGINFO("Unable to open '%s'\n", folder.c_str());
 		if (folder != "/" && (mShowNavFolders != 0 || mShowFiles != 0)) {
-			size_t found;
-			found = folder.find_last_of('/');
-			if (found != std::string::npos) {
+      if (size_t found = folder.find_last_of('/'); found != std::string::npos) {
 				std::string new_folder = folder.substr(0, found);
-
 				if (new_folder.length() < 2)
 					new_folder = "/";
 				DataManager::SetValue(mPathVar, new_folder);
@@ -270,93 +264,63 @@ int GUIFileSelector::GetFileList(const std::string folder)
 		return -1;
 	}
 
-	while ((de = readdir(d)) != NULL) {
-		FileData data;
-		bool match = false;
+	// directory_iterator skips "." and ".."; add ".." manually for navigation.
+	if (folder != "/" && mShowNavFolders) {
+		FileData data{};
+		data.fileName = "..";
+		data.fileType = DT_DIR;
+		mFolderList.push_back(data);
+	}
 
-		data.fileName = de->d_name;
-		if (data.fileName == ".")
-			continue;
-		if (data.fileName == ".." && folder == "/")
-			continue;
+	for (const auto& entry : dir_iter) {
+		const std::string file_name = entry.path().filename();
 
-		data.fileType = de->d_type;
+		struct stat st{};
+		if (stat(entry.path().c_str(), &st) != 0) continue;
 
-		std::string path = folder + "/" + data.fileName;
-		stat(path.c_str(), &st);
-		data.protection = st.st_mode;
-		data.userId = st.st_uid;
-		data.groupId = st.st_gid;
-		data.fileSize = st.st_size;
-		data.lastAccess = st.st_atime;
-		data.lastModified = st.st_mtime;
-		data.lastStatChange = st.st_ctime;
+		FileData data{
+		  .fileName = file_name,
+		  .protection = st.st_mode,
+		  .userId = st.st_uid,
+		  .groupId = st.st_gid,
+		  .fileSize = st.st_size,
+		  .lastAccess = st.st_atime,
+		  .lastModified = st.st_mtime,
+		  .lastStatChange = st.st_ctime,
+		};
 
-		if (data.fileType == DT_UNKNOWN) {
-			data.fileType = TWFunc::Get_D_Type_From_Stat(path);
-		}
-		if (data.fileType == DT_DIR) {
-			if (mShowNavFolders || (data.fileName != "." && data.fileName != ".."))
-				mFolderList.push_back(data);
-		} else if (data.fileType == DT_REG || data.fileType == DT_LNK || data.fileType == DT_BLK) {
-#ifdef __ANDROID_API_M__
-			std::vector<std::string> mExtnResults = android::base::Split(mExtn, ";");
-			for (const std::string& mExtnElement : mExtnResults)
-			{
-				std::string mExtnName = android::base::Trim(mExtnElement);
-				if (mExtnName.empty() || (data.fileName.length() >= mExtnName.length() && data.fileName.substr(data.fileName.length() - mExtnName.length()) == mExtnName)) {
-					if (mExtnName == ".ab" && twadbbu::Check_ADB_Backup_File(path))
-						mFolderList.push_back(data);
-					else
-						mFileList.push_back(data);
-					match = true;
+		if (S_ISDIR(st.st_mode)) {
+			// Real directories and symlinks to directories (stat follows symlinks).
+			data.fileType = DT_DIR;
+			mFolderList.push_back(data);
+		} else {
+			data.fileType = st.st_mode & S_IFMT;
+
+			// Try extension matching first
+			bool matched = false;
+			for (const std::string& ext : android::base::Split(mExtn, ";")) {
+				const std::string trimmed = android::base::Trim(ext);
+				if (trimmed.empty() || file_name.ends_with(trimmed)) {
+					mFileList.push_back(data);
+					matched = true;
 					break;
 				}
 			}
+			if (matched) continue;
 
-			if (!match) {
-				std::vector<std::string> mPrfxResults = android::base::Split(mPrfx, ";");
-				for (const std::string& mPrfxElement : mPrfxResults)
-				{
-					std::string mPrfxName = android::base::Trim(mPrfxElement);
-					if (!mPrfxName.empty() && data.fileName.length() >= mPrfxName.length() && data.fileName.substr(0, mPrfxName.length()) == mPrfxName) {
-						mFileList.push_back(data);
-					}
-#else //On android 5.1 we can't use android::base::Trim and Split so just use the first extension written in the list
-			std::size_t seppos = mExtn.find_first_of(";");
-			std::string mExtnf;
-			if (seppos!=std::string::npos){
-				mExtnf = mExtn.substr(0, seppos);
-			} else {
-				mExtnf = mExtn;
-			}
-			if (mExtnf.empty() || (data.fileName.length() >= mExtnf.length() && data.fileName.substr(data.fileName.length() - mExtnf.length()) == mExtnf)) {
-				if (mExtnf == ".ab" && twadbbu::Check_ADB_Backup_File(path))
-					mFolderList.push_back(data);
-				else
+			// Then try prefix matching
+			for (const std::string& prfx : android::base::Split(mPrfx, ";")) {
+				const std::string trimmed = android::base::Trim(prfx);
+				if (!trimmed.empty() && file_name.starts_with(trimmed)) {
 					mFileList.push_back(data);
-				match = true;
-			}
-
-			if (!match) {
-				std::size_t seppos = mPrfx.find_first_of(";");
-				std::string mPrfxf;
-				if (seppos!=std::string::npos){
-					mPrfxf = mPrfx.substr(0, seppos);
-				} else {
-					mPrfxf = mPrfx;
-				}
-				if (!mPrfxf.empty() && data.fileName.length() >= mPrfxf.length() && data.fileName.substr(0, mPrfxf.length()) == mPrfxf) {
-					mFileList.push_back(data);
-#endif
+					break;
 				}
 			}
 		}
 	}
-	closedir(d);
 
-	std::sort(mFolderList.begin(), mFolderList.end(), fileSort);
-	std::sort(mFileList.begin(), mFileList.end(), fileSort);
+	std::ranges::sort(mFolderList, fileSort);
+	std::ranges::sort(mFileList, fileSort);
 
 	return 0;
 }
@@ -433,7 +397,7 @@ void GUIFileSelector::NotifySelect(size_t item_selected)
 				cwd += str;
 			}
 
-			if (mShowNavFolders == 0 && (mShowFiles == 0 || mExtn == ".ab")) {
+			if (mShowNavFolders == 0 && mShowFiles == 0) {
 				// this is probably the restore list and we need to save chosen location to mVariable instead of mPathVar
 				DataManager::SetValue(mVariable, cwd);
 			} else {
@@ -442,32 +406,6 @@ void GUIFileSelector::NotifySelect(size_t item_selected)
 			}
 		} else if (!mVariable.empty()) {
 			str = mFileList.at(item_selected - folderSize).fileName;
-			std::string str_lower = str;
-			std::transform(str_lower.begin(), str_lower.end(), str_lower.begin(), ::tolower);
-			if (str_lower.size() >= 4 && str_lower.compare(str_lower.size() - 4, 4, ".img") == 0) {
-				DataManager::SetValue("tw_selectimage", 1);
-				if (str_lower == "boot.img" || str_lower == "boot_a.img" || str_lower == "boot_b.img") {
-					DataManager::SetValue("tw_flash_partition", "/boot;");
-				} else if (str_lower == "init_boot.img" || str_lower == "init_boot_a.img" || str_lower == "init_boot_b.img") {
-					DataManager::SetValue("tw_flash_partition", "/init_boot;");
-				} else if (str_lower == "vendor_boot.img" || str_lower == "vendor_boot_a.img" || str_lower == "vendor_boot_b.img") {
-					DataManager::SetValue("tw_flash_partition", "/vendor_boot;");
-				} else if ((str_lower.find("recovery") == 0) || (str_lower.find("twrp") == 0) || (str_lower.find("orangefox") == 0)) {
-					DataManager::SetValue("tw_flash_partition", "/recovery;");
-				} else if (str_lower == "dtbo.img" || str_lower == "dtbo_a.img" || str_lower == "dtbo_b.img") {
-					DataManager::SetValue("tw_flash_partition", "/dtbo;");
-				} else if (str_lower.find("kernelsu_patched_") == 0) {
-					if (PartitionManager.Find_Partition_By_Path("/init_boot") != nullptr) {
-						DataManager::SetValue("tw_flash_partition", "/init_boot;");
-					} else {
-						DataManager::SetValue("tw_flash_partition", "/boot;");
-					}
-				} else {
-					DataManager::SetValue("tw_flash_partition", "");
-				}
-			} else {
-				DataManager::SetValue("tw_selectimage", 0);
-			}
 			if (mSelection != "0")
 				DataManager::SetValue(mSelection, str);
 

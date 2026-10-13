@@ -446,15 +446,15 @@ cc_binary {
         "exclude.cpp",
         "infomanager.cpp",
         "data.cpp",
+        "digest/twrp_digest_driver.cpp",
         "partition.cpp",
         "partitionmanager.cpp",
         "progresstracking.cpp",
-        "startupArgs.cpp",
-        "twrp-functions.cpp",
-        "twrpDigestDriver.cpp",
+        "startup/startup_args.cpp",
+        "startup/get_args.cpp",
+        "twrp_functions.cpp",
         "openrecoveryscript.cpp",
-        "tarWrite.c",
-        "twrpAdbBuFifo.cpp",
+        "tarWrite.cpp",
         "twrpRepacker.cpp",
         "oaes/oaes.cpp",
         "BasePartition.cpp",
@@ -482,7 +482,7 @@ cc_binary {
         "gui2/backend/twrp_background_backend.cpp",
     ] + select(soong_config_variable("twrpGlobalVars", "exclude_apex"), {
         false: [
-            "twrpApex.cpp"
+            "twrp_apex.cpp"
         ],
         default: []
     }),
@@ -493,6 +493,7 @@ cc_binary {
     ],
     local_include_dirs: [
         "gui/include",
+        "digest",
     ],
 
     header_libs: [
@@ -568,7 +569,6 @@ cc_binary {
         "libtar",
         "libblkid",
         "libtwrpminui",
-        "libtwrpadbbu",
         "libbootloader_message",
         "libtwrpdigest",
         "libc++",
@@ -612,7 +612,6 @@ cc_binary {
             "libsysutils",
             "libkeystoreinfo",
             "libgatekeeper_aidl",
-            "libgpt_twrp",
         ],
         default: [],
     }) + select(soong_config_variable("twrpGlobalVars", "include_se_omapi"), {
@@ -643,7 +642,6 @@ cc_binary {
         "toolbox",
         "mkshrc_twrp",
         "minadbd",
-        "twrpbu",
         "android.hardware.health@2.1-service.recovery",
         "adbd_system_api_recovery",
         "libsync.recovery",

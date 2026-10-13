@@ -36,7 +36,7 @@
 #include "fscrypt_policy.h"
 #endif
 
-#include "twrpApex.hpp"
+#include "twrp_apex.hpp"
 
 inline constexpr int MAX_FSTAB_LINE_LENGTH = 2048;
 
@@ -104,8 +104,6 @@ class TWPartition;
 struct PartitionSettings {
     TWPartition *Part; // Partition to pass to the partition backup loop
     std::string Backup_Folder; // Path to restore folder
-    bool adbbackup; // tell the system we are backing up over adb
-    bool adb_compression; // 0 == uncompressed, 1 == compressed
     bool generate_digest; // tell system to create digest for partitions
     bool generate_md5; // tell system to create md5 for partitions
     uint64_t total_restore_size; // Total size of restored backup
@@ -297,13 +295,13 @@ private:
     // Indicates if this partition is removable -- affects how often we check overall size, if present, etc.
     int Length;
     // Used by make_ext4fs to leave free space at the end of the partition block for things like a crypto footer
-    unsigned long long Size; // Overall size of the partition
-    unsigned long long Used; // Overall used space
-    unsigned long long Free; // Overall free space
-    unsigned long long Backup_Size;
+    uint64_t Size; // Overall size of the partition
+    uint64_t Used; // Overall used space
+    uint64_t Free; // Overall free space
+    uint64_t Backup_Size;
     // Backup size -- may be different than used space especially when /data/media is present
     bool Backup_Size_Provisional; // Backup_Size is the statfs figure, not the walked one
-    unsigned long long Restore_Size; // Restore size of the current restore operation
+    uint64_t Restore_Size; // Restore size of the current restore operation
     bool Can_Be_Encrypted;
     // This partition might be encrypted, affects error handling, can only be true if crypto support is compiled in
     bool Is_Encrypted;
@@ -396,10 +394,8 @@ public:
     int Check_Backup_Name(const std::string &Backup_Name, bool Display_Error, bool Must_Be_Unique);
 
     // Checks the current backup name to ensure that it is valid and optionally that a backup with that name doesn't already exist
-    bool Run_Backup(bool adbbackup); // Initiates a backup in the current storage
+    bool Run_Backup(); // Initiates a backup in the current storage
     int Run_Restore(const std::string &Restore_Name); // Restores a backup
-    // bool Write_ADB_Stream_Header(uint64_t partition_count); // Write ADB header over twrpbu FIFO
-    // bool Write_ADB_Stream_Trailer(); // Write ADB trailer over twrpbu FIFO
     void Set_Restore_Files(std::string Restore_Name);
 
     // Used to gather a list of available backup partitions for the user to select for a restore

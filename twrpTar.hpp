@@ -16,8 +16,10 @@
         along with TWRP.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-extern "C" {
 	#include "libtar/libtar.h"
+extern "C" {
+	ssize_t write_tar(int fd, const void *buffer, size_t size);
+	ssize_t write_tar_no_buffer(int fd, const void *buffer, size_t size);
 }
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -30,7 +32,7 @@ extern "C" {
 #include "exclude.hpp"
 #include "progresstracking.hpp"
 #include "partitions.hpp"
-#include "twrp-functions.hpp"
+#include "twrp_functions.hpp"
 
 using namespace std;
 
@@ -52,10 +54,10 @@ public:
 	int extractTarFork();
 	void setfn(string fn);
 	void setdir(string dir);
-	void setsize(unsigned long long backup_size);
+	void setsize(uint64_t backup_size);
 	void setpassword(string pass);
-	unsigned long long get_size();
-	void Set_Archive_Type(Archive_Type archive_type);
+	uint64_t get_size();
+	void Set_Archive_Type(ArchiveType archive_type);
 
 public:
 	int use_encryption;
@@ -84,10 +86,10 @@ private:
 	static void* createList(void *cookie);
 	static void* extractMulti(void *cookie);
 	int tarList(std::vector<TarListStruct> *TarList, unsigned thread_id);
-	unsigned long long uncompressedSize(string filename);
+	uint64_t uncompressedSize(const string& filename);
 	static void Signal_Kill(int signum);
 
-	enum Archive_Type current_archive_type;
+	enum ArchiveType current_archive_type;
 	unsigned long long Archive_Current_Size;
 	unsigned long long Total_Backup_Size;
 	bool include_root_dir;

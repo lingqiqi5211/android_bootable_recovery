@@ -17,6 +17,7 @@
 */
 
 
+#include <sys/mount.h>
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -34,6 +35,7 @@
 #include <stdio.h>
 #include <cutils/properties.h>
 
+#include <android-base/properties.h>
 #include <android-base/unique_fd.h>
 
 #include "twcommon.h"
@@ -45,16 +47,13 @@
 #include "variables.h"
 #include "data.hpp"
 #include "partitions.hpp"
-#include "twrpDigestDriver.hpp"
-#include "twrp-functions.hpp"
+#include "twrp_digest_driver.hpp"
+#include "twrp_functions.hpp"
 #include "gui/gui.hpp"
 #include "gui/pages.hpp"
 #include "twinstall.h"
 #include "installcommand.h"
 #include "../twrpRepacker.hpp"
-extern "C" {
-	#include "gui/gui.h"
-}
 
 #define AB_OTA "payload_properties.txt"
 
@@ -75,13 +74,13 @@ static int Install_Theme(const char* path, ZipArchiveHandle Zip) {
 		return INSTALL_ERROR;
 	string theme_path = DataManager::GetSettingsStoragePath();
 	theme_path += "/TWRP/theme";
-	if (!TWFunc::Path_Exists(theme_path)) {
-		if (!TWFunc::Recursive_Mkdir(theme_path)) {
+	if (!TWFunc::IsPathExists(theme_path)) {
+		if (!TWFunc::RecursiveMkdir(theme_path)) {
 			return INSTALL_ERROR;
 		}
 	}
 	theme_path += "/ui.zip";
-	if (TWFunc::copy_file(path, theme_path, 0644) != 0) {
+	if (TWFunc::CopyFile(path, theme_path, 0644) != 0) {
 		return INSTALL_ERROR;
 	}
 	LOGINFO("Installing custom theme '%s' to '%s'\n", path, theme_path.c_str());
@@ -94,7 +93,7 @@ static int Prepare_Update_Binary(ZipArchiveHandle Zip) {
 	property_get("ro.product.cpu.abilist", arches, "error");
 	if (strcmp(arches, "error") == 0)
 		property_get("ro.product.cpu.abi", arches, "error");
-	vector<string> split = TWFunc::split_string(arches, ',', true);
+	vector<string> split = TWFunc::SplitString(arches, ',', true);
 	std::vector<string>::iterator arch;
 	std::string base_name = UPDATE_BINARY_NAME;
 	base_name += "-";
@@ -203,7 +202,7 @@ static int Run_Update_Binary(const char *path, int* wipe_cache, zip_type ztype) 
 		} else if (strcmp(command, "set_progress") == 0) {
 			char* fraction_char = strtok(NULL, " \n");
 			float fraction_float = strtof(fraction_char, NULL);
-			DataManager::_SetProgress(fraction_float);
+			DataManager::SetProgress(fraction_float, true);
 		} else if (strcmp(command, "ui_print") == 0) {
 			char* display_value = strtok(NULL, "\n");
 			if (display_value) {
@@ -223,7 +222,7 @@ static int Run_Update_Binary(const char *path, int* wipe_cache, zip_type ztype) 
 	}
 	fclose(child_data);
 
-	int waitrc = TWFunc::Wait_For_Child(pid, &status, "Updater");
+	int waitrc = TWFunc::WaitForChild(pid, &status, "Updater");
 	if (waitrc != 0)
 		return INSTALL_ERROR;
 
@@ -253,7 +252,7 @@ int TWinstall_zip(const char* path, int* wipe_cache, bool check_for_digest) {
 
 		if (check_for_digest) {
 			gui_msg("check_for_digest=Checking for Digest file...");
-			if (*path != '@' && !twrpDigestDriver::Check_File_Digest(Full_Filename)) {
+			if (*path != '@' && !TwrpDigestDriver::CheckFileDigest(Full_Filename)) {
 				LOGERR("Aborting zip install: Digest verification failed\n");
 				return INSTALL_CORRUPT;
 			}
@@ -280,7 +279,7 @@ int TWinstall_zip(const char* path, int* wipe_cache, bool check_for_digest) {
 		}
 		LOGINFO("%zu key(s) loaded from %s\n", loaded_keys.size(), CERTIFICATE_ZIP_FILE);
 
-		ret_val = verify_file(package.get(), loaded_keys, std::bind(&DataManager::SetProgress, std::placeholders::_1));
+		ret_val = verify_file(package.get(), loaded_keys, std::bind(&DataManager::SetProgress, std::placeholders::_1, false));
 		if (ret_val != VERIFY_SUCCESS) {
 			LOGINFO("Zip signature verification failed: %i\n", ret_val);
 			gui_err("verify_zip_fail=Zip signature verification failed!");
@@ -296,11 +295,6 @@ int TWinstall_zip(const char* path, int* wipe_cache, bool check_for_digest) {
 	}
 
 	bool _isUpdatePkg = isUpdatePkg(Zip);
-
-	if (_isUpdatePkg) {
-		if (TWFunc::get_log_dir() == DATA_LOGS_DIR && !TWFunc::Path_Exists(DATA_LOGS_DIR))
-			TWFunc::Use_Tmpfs_Cache();
-	}
 
 	if (unmount_system) {
 		gui_msg("unmount_system=Unmounting System...");
@@ -339,7 +333,7 @@ int TWinstall_zip(const char* path, int* wipe_cache, bool check_for_digest) {
 			bool vendor_mount_state = PartitionManager.Is_Mounted_By_Path("/vendor");
 			PartitionManager.Mount_By_Path(PartitionManager.Get_Android_Root_Path(), false);
 			PartitionManager.Mount_By_Path("/vendor", false);
-			TWFunc::copy_file("/system/bin/sh", "/tmp/sh", 0755);
+			TWFunc::CopyFile("/system/bin/sh", "/tmp/sh", 0755);
 			mount("/tmp/sh", "/system/bin/sh", "auto", MS_BIND, NULL);
 			ret_val = Run_Update_Binary(path, wipe_cache, AB_OTA_ZIP_TYPE);
 			umount("/system/bin/sh");
