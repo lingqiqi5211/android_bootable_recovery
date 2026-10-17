@@ -124,6 +124,11 @@ enum class BackupMethod {
     BM_DD = 2,
 };
 
+namespace gui2_backend {
+class twrp_tools_backend;
+class twrp_mount_backend;
+}
+
 // Partition class
 class TWPartition {
 public:
@@ -231,7 +236,7 @@ private:
     // Checks the block device given and follows symlinks until it gets to the real block device
     unsigned long long IOCTL_Get_Block_Size(); // Finds the partition size using ioctl
     bool Find_Partition_Size(); // Finds the partition size from /proc/partitions
-    void Ensure_Subdirectory_Unmounted(const char *Mount_Point);
+    bool Ensure_Subdirectory_Unmounted(const char *Mount_Point);
 
     // Ensure that a subdirectory is unmounted before unmounting this partition
     unsigned long long Get_Size_Via_du(std::string Path, bool Display_Error); // Uses du to get sizes
@@ -303,6 +308,8 @@ private:
     // This partition is thought to be encrypted -- it wouldn't mount for some reason, only avialble with crypto support
     bool Is_Decrypted; // This partition has successfully been decrypted
     bool Is_FBE; // File Based Encryption is present
+    bool DE_Keys_Ready = false; // Existing device/DE keys installed on this mount
+    bool Restore_DE_Keys();
     bool Mount_To_Decrypt;
     // Mount this partition during decrypt (/vendor, /firmware, etc in case we need proprietary libs or firmware files)
     std::string Display_Name; // Display name for the GUI
@@ -351,6 +358,8 @@ private:
     friend class DataManager;
     friend class GUIPartitionList;
     friend class GUIAction;
+    friend class gui2_backend::twrp_tools_backend;
+    friend class gui2_backend::twrp_mount_backend;
     friend class PageManager;
 };
 
