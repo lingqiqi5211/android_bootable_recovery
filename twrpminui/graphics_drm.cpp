@@ -1340,6 +1340,23 @@ static GRSurface* drm_init(minui_backend* backend __unused) {
 
   disable_non_main_crtcs(drm_fd, res, main_monitor_crtc);
 
+  const uint32_t requested_refresh =
+      android::base::GetUintProperty<uint32_t>("twrp.drm.refresh_rate", 0);
+  if (requested_refresh != 0) {
+    const auto& selected = main_monitor_connector->modes[selected_mode];
+    bool found = false;
+    for (int i = 0; i < main_monitor_connector->count_modes; ++i) {
+      const auto& mode = main_monitor_connector->modes[i];
+      if (mode.hdisplay == selected.hdisplay && mode.vdisplay == selected.vdisplay &&
+          mode.vrefresh == requested_refresh) {
+        selected_mode = i;
+        found = true;
+        break;
+      }
+    }
+    if (!found)
+      printf("Requested %u Hz mode is unavailable; keeping selected mode\n", requested_refresh);
+  }
   main_monitor_crtc->mode = main_monitor_connector->modes[selected_mode];
 
   int width = main_monitor_crtc->mode.hdisplay;
@@ -1347,7 +1364,8 @@ static GRSurface* drm_init(minui_backend* backend __unused) {
 
   fast_mode = {};
   uint32_t fastest = selected_mode;
-  if (!legacy_modeset && android::base::GetBoolProperty("twrp.drm.fast_mode", false) &&
+  if (requested_refresh == 0 && !legacy_modeset &&
+      android::base::GetBoolProperty("twrp.drm.fast_mode", false) &&
       pick_fastest_mode(main_monitor_connector, width, height, &fastest) &&
       main_monitor_connector->modes[fastest].vrefresh > main_monitor_crtc->mode.vrefresh)
     fast_mode = main_monitor_connector->modes[fastest];
